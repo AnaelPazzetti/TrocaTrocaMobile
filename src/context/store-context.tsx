@@ -559,17 +559,6 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     getCityName();
   }, [userLocation]);
 
-  // Recalculate proximity distances whenever the user location or ads changes
-  const adsWithDistance = useMemo(() => {
-    const lat = userLocation?.coords.latitude ?? DEFAULT_LAT;
-    const lng = userLocation?.coords.longitude ?? DEFAULT_LNG;
-
-    return ads.map((ad) => ({
-      ...ad,
-      distance: getDistanceInKm(lat, lng, ad.latitude, ad.longitude),
-    }));
-  }, [ads, userLocation]);
-
   // Dynamically calculate current user score and counts based on active offers & messages
   const currentUserWithScore = useMemo(() => {
     if (!currentUser) return null;
@@ -615,6 +604,21 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     currentUserWithScore?.tradesCount,
     currentUserWithScore?.messagesCount
   ]);
+
+  // Recalculate proximity distances whenever the user location or ads changes
+  const adsWithDistance = useMemo(() => {
+    const lat = userLocation?.coords.latitude ?? DEFAULT_LAT;
+    const lng = userLocation?.coords.longitude ?? DEFAULT_LNG;
+
+    return ads.map((ad) => {
+      const isMe = currentUserWithScore && ad.userId === currentUserWithScore.id;
+      return {
+        ...ad,
+        userScore: isMe ? currentUserWithScore.score : ad.userScore,
+        distance: getDistanceInKm(lat, lng, ad.latitude, ad.longitude),
+      };
+    });
+  }, [ads, userLocation, currentUserWithScore]);
 
   // Auth: Supabase Log In
   const login = async (email: string, password: string): Promise<boolean> => {
