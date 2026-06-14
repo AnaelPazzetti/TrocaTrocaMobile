@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Supabase & PostgreSQL Backend Specification",
+  "description": "Especificação arquitetural completa do banco de dados relacional com suporte a buscas espaciais PostGIS, Políticas de Segurança de Nível de Linha (RLS), Armazenamento de Arquivos e triggers para sincronização futura do aplicativo ClassiTrade.",
+  "version": "1.0.0",
+  "database": {
+    "extensions": [
+      {
+        "name": "uuid-ossp",
+        "purpose": "Geração de identificadores únicos universais (UUID)"
+      },
+      {
+        "name": "postgis",
+        "purpose": "Suporte a tipos espaciais e consultas geográficas (latitude/longitude e proximidade)"
+      }
+    ],
+    "tables": [
+      {
+        "name": "profiles",
+        "description": "Tabela de usuários sincronizada automaticamente com o Supabase Auth",
+        "sql": "CREATE TABLE public.profiles (\n  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,\n  name TEXT NOT NULL,\n  email TEXT UNIQUE NOT NULL,\n  avatar_url TEXT,\n  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL\n);"
+      },
+      {
+        "name": "ads",
+        "description": "Anúncios cadastrados com campos geográficos PostGIS",
+        "sql": "CREATE TABLE public.ads (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,\n  title TEXT NOT NULL CHECK (char_length(title) >= 3),\n  description TEXT NOT NULL,\n  category TEXT NOT NULL CHECK (category IN ('Eletrônicos', 'Moda', 'Esportes', 'Casa', 'Livros')),\n  images TEXT[] NOT NULL DEFAULT '{}',\n  exchange_accept TEXT NOT NULL,\n  latitude DOUBLE PRECISION NOT NULL,\n  longitude DOUBLE PRECISION NOT NULL,\n  geog GEOGRAPHY(Point, 4326) NOT NULL,\n  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL\n);\n\n-- Índice espacial GIST para buscas geográficas rápidas\nCREATE INDEX ads_geog_idx ON public.ads USING GIST (geog);"
+      },
+      {
+        "name": "questions",
+        "description": "Perguntas públicas e respostas do vendedor sobre o anúncio",
+        "sql": "CREATE TABLE public.questions (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  ad_id UUID NOT NULL REFERENCES public.ads(id) ON DELETE CASCADE,\n  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,\n  content TEXT NOT NULL CHECK (char_length(content) >= 2),\n  answer TEXT,\n  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL\n);"
+      },
+      {
+        "name": "offers",
+        "description": "Propostas privadas de trocas ligando um anúncio próprio ou customizado",
+        "sql": "CREATE TABLE public.offers (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  ad_id UUID NOT NULL REFERENCES public.ads(id) ON DELETE CASCADE,\n  sender_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,\n  receiver_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,\n  message TEXT NOT NULL,\n  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'rejected')),\n  linked_ad_id UUID REFERENCES public.ads(id) ON DELETE SET NULL,\n  custom_item_title TEXT,\n  custom_item_description TEXT,\n  custom_item_images TEXT[],\n  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,\n  CONSTRAINT chk_offer_items CHECK (\n    (linked_ad_id IS NOT NULL AND custom_item_title IS NULL AND custom_item_description IS NULL) OR\n    (linked_ad_id IS NULL AND custom_item_title IS NOT NULL AND custom_item_description IS NOT NULL)\n  )\n);"
+      },
+      {
+        "name": "messages",
+        "description": "Mensagens de chat privado dentro de uma proposta de troca ativa",
+        "sql": "CREATE TABLE public.messages (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  offer_id UUID NOT NULL REFERENCES public.offers(id) ON DELETE CASCADE,\n  sender_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,\n  content TEXT NOT NULL,\n  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL\n);"
+      }
+    ],
+    "geospatial_functions": [
+      {
+        "name": "get_nearby_ads",
+        "description": "Função RPC para buscar anúncios filtrados e ordenados por proximidade",
+        "sql": "CREATE OR REPLACE FUNCTION public.get_nearby_ads(\n  user_lat DOUBLE PRECISION,\n  user_lng DOUBLE PRECISION,\n  category_filter TEXT DEFAULT 'Todos',\n  search_query TEXT DEFAULT ''\n)\nRETURNS TABLE (\n  id UUID,\n  user_id UUID,\n  title TEXT,\n  description TEXT,\n  category TEXT,\n  images TEXT[],\n  exchange_accept TEXT,\n  latitude DOUBLE PRECISION,\n  longitude DOUBLE PRECISION,\n  created_at TIMESTAMPTZ,\n  distance_km DOUBLE PRECISION,\n  user_name TEXT,\n  user_avatar TEXT,\n  user_score BIGINT\n) AS $$\nBEGIN\n  RETURN QUERY\n  SELECT \n    a.id,\n    a.user_id,\n    a.title,\n    a.description,\n    a.category,\n    a.images,\n    a.exchange_accept,\n    a.latitude,\n    a.longitude,\n    a.created_at,\n    ST_Distance(a.geog, ST_MakePoint(user_lng, user_lat)::geography) / 1000.0 AS distance_km,\n    p.name AS user_name,\n    p.avatar_url AS user_avatar,\n    COALESCE(v.score, 0)::BIGINT AS user_score\n  FROM public.ads a\n  JOIN public.profiles p ON a.user_id = p.id\n  LEFT JOIN public.v_user_scores v ON p.id = v.user_id\n  WHERE \n    (category_filter = 'Todos' OR a.category = category_filter)\n    AND (\n      search_query = '' \n      OR a.title ILIKE '%' || search_query || '%'\n      OR a.description ILIKE '%' || search_query || '%'\n      OR a.exchange_accept ILIKE '%' || search_query || '%'\n    )\n  ORDER BY distance_km ASC;\nEND;\n$$ LANGUAGE plpgsql SECURITY DEFINER;"
+      }
+    ],
+    "triggers_and_views": [
+      {
+        "name": "ads_set_geog_trigger",
+        "description": "Garante que o ponto geográfico 'geog' seja sempre calculado a partir da lat/lng ao inserir/atualizar",
+        "sql": "CREATE OR REPLACE FUNCTION public.sync_ads_geog()\nRETURNS TRIGGER AS $$\nBEGIN\n  NEW.geog := ST_MakePoint(NEW.longitude, NEW.latitude)::geography;\n  RETURN NEW;\nEND;\n$$ LANGUAGE plpgsql;\n\nCREATE TRIGGER tr_sync_ads_geog\nBEFORE INSERT OR UPDATE ON public.ads\nFOR EACH ROW EXECUTE FUNCTION public.sync_ads_geog();"
+      },
+      {
+        "name": "profiles_sync_auth_trigger",
+        "description": "Cria um perfil público automaticamente ao registrar um novo e-mail no Supabase Auth",
+        "sql": "CREATE OR REPLACE FUNCTION public.handle_new_user()\nRETURNS TRIGGER AS $$\nBEGIN\n  INSERT INTO public.profiles (id, name, email, avatar_url)\n  VALUES (\n    NEW.id,\n    COALESCE(NEW.raw_user_meta_data->>'name', NEW.email),\n    NEW.email,\n    COALESCE(NEW.raw_user_meta_data->>'avatar_url', 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150')\n  );\n  RETURN NEW;\nEND;\n$$ LANGUAGE plpgsql SECURITY DEFINER;\n\nCREATE TRIGGER on_auth_user_created\nAFTER INSERT ON auth.users\nFOR EACH ROW EXECUTE FUNCTION public.handle_new_user();"
+      },
+      {
+        "name": "v_user_scores",
+        "description": "View que calcula dinamicamente o score de confiança do usuário: Score = (Trocas Finalizadas * 10) + (Mensagens Enviadas * 1)",
+        "sql": "CREATE OR REPLACE VIEW public.v_user_scores AS\nSELECT \n  p.id AS user_id,\n  (\n    (SELECT COUNT(*) FROM public.offers o WHERE o.status = 'accepted' AND (o.sender_id = p.id OR o.receiver_id = p.id)) * 10 +\n    (SELECT COUNT(*) FROM public.messages m WHERE m.sender_id = p.id) * 1\n  ) AS score\nFROM public.profiles p;"
+      }
+    ],
+    "row_level_security": {
+      "profiles": [
+        "ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;",
+        "CREATE POLICY \"Perfis públicos visíveis para todos\" ON public.profiles FOR SELECT USING (true);",
+        "CREATE POLICY \"Usuários editam apenas seu próprio perfil\" ON public.profiles FOR UPDATE USING (auth.uid() = id);"
+      ],
+      "ads": [
+        "ALTER TABLE public.ads ENABLE ROW LEVEL SECURITY;",
+        "CREATE POLICY \"Anúncios visíveis publicamente\" ON public.ads FOR SELECT USING (true);",
+        "CREATE POLICY \"Usuários logados criam anúncios\" ON public.ads FOR INSERT WITH CHECK (auth.uid() = user_id);",
+        "CREATE POLICY \"Usuários editam seus próprios anúncios\" ON public.ads FOR UPDATE USING (auth.uid() = user_id);",
+        "CREATE POLICY \"Usuários excluem seus próprios anúncios\" ON public.ads FOR DELETE USING (auth.uid() = user_id);"
+      ],
+      "questions": [
+        "ALTER TABLE public.questions ENABLE ROW LEVEL SECURITY;",
+        "CREATE POLICY \"Perguntas visíveis publicamente\" ON public.questions FOR SELECT USING (true);",
+        "CREATE POLICY \"Qualquer usuário logado pergunta\" ON public.questions FOR INSERT WITH CHECK (auth.uid() = user_id);",
+        "CREATE POLICY \"Vendedor do anúncio responde à pergunta\" ON public.questions FOR UPDATE USING (auth.uid() = (SELECT user_id FROM public.ads WHERE id = ad_id));"
+      ],
+      "offers": [
+        "ALTER TABLE public.offers ENABLE ROW LEVEL SECURITY;",
+        "CREATE POLICY \"Ofertas visíveis apenas para os envolvidos\" ON public.offers FOR SELECT USING (auth.uid() = sender_id OR auth.uid() = receiver_id);",
+        "CREATE POLICY \"Qualquer usuário cria proposta de troca\" ON public.offers FOR INSERT WITH CHECK (auth.uid() = sender_id);",
+        "CREATE POLICY \"Envolvidos na troca atualizam status\" ON public.offers FOR UPDATE USING (auth.uid() = sender_id OR auth.uid() = receiver_id);"
+      ],
+      "messages": [
+        "ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;",
+        "CREATE POLICY \"Mensagens de chat visíveis apenas para os envolvidos\" ON public.messages FOR SELECT USING (\n  EXISTS (\n    SELECT 1 FROM public.offers \n    WHERE id = offer_id AND (sender_id = auth.uid() OR receiver_id = auth.uid())\n  )\n);",
+        "CREATE POLICY \"Envolvidos na oferta enviam novas mensagens\" ON public.messages FOR INSERT WITH CHECK (\n  auth.uid() = sender_id AND \n  EXISTS (\n    SELECT 1 FROM public.offers \n    WHERE id = offer_id AND (sender_id = auth.uid() OR receiver_id = auth.uid())\n  )\n);"
+      ]
+    }
+  },
+  "storage": {
+    "buckets": [
+      {
+        "name": "ad-images",
+        "public": true,
+        "max_file_size_bytes": 5242880,
+        "allowed_mime_types": ["image/jpeg", "image/png", "image/webp"],
+        "policies": [
+          "CREATE POLICY \"Fotos públicas para leitura\" ON storage.objects FOR SELECT USING (bucket_id = 'ad-images');",
+          "CREATE POLICY \"Usuários autenticados enviam fotos\" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'ad-images' AND auth.role() = 'authenticated');",
+          "CREATE POLICY \"Usuário gerencia suas próprias fotos\" ON storage.objects FOR DELETE USING (bucket_id = 'ad-images' AND owner = auth.uid());"
+        ]
+      },
+      {
+        "name": "user-avatars",
+        "public": true,
+        "max_file_size_bytes": 2097152,
+        "allowed_mime_types": ["image/jpeg", "image/png"],
+        "policies": [
+          "CREATE POLICY \"Avatares públicos para leitura\" ON storage.objects FOR SELECT USING (bucket_id = 'user-avatars');",
+          "CREATE POLICY \"Usuários enviam seu próprio avatar\" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'user-avatars' AND auth.uid()::text = (storage.foldername(name))[1]);"
+        ]
+      }
+    ]
+  }
+}

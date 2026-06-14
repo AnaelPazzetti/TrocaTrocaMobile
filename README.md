@@ -1,56 +1,81 @@
-# Welcome to your Expo app 👋
+# TrocaTrocaMobile 👋
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+TrocaTroca is a modern, premium mobile application designed for intelligent peer-to-peer item exchanges (bartering). Built with **React Native / Expo** and powered by a robust **Supabase (PostgreSQL + PostGIS)** backend, it allows users to publish listings, discover nearby exchange opportunities, make private trade proposals, and chat in real-time.
 
-## Get started
+## 🚀 Key Features
 
-1. Install dependencies
+- **Geospatial Discovery**: Search listings by category and filter/sort by distance, powered by PostgreSQL PostGIS spatial indexing.
+- **Dynamic Proximity & Geocoding**: Automatically detects user location and resolves coordinates to city/state names (with a fallback web-geocoding service using OpenStreetMap Nominatim API).
+- **Private Trade Proposals**: Make private swap offers on existing ads.
+- **Unlisted/Custom Offers**: Make proposals using unlisted (custom) items. This dynamically creates a hidden advertisement tied to the trade conversation, allowing details screens and chat redirects to function perfectly.
+- **Conversation-Based Access Controls**: Unlisted custom items are securely hidden from all public feeds and profiles, and can only be accessed by active trade participants.
+- **Dynamic Trust Score**: Real-time user confidence dashboard (Score = Trades Accepted * 10 + Messages Sent * 1) synchronized with database profiles.
+- **Private Chat Negotiation**: Sub-chat rooms created automatically inside each trade proposal for secure negotiation.
+- **Theme Customization**: Beautiful light/dark mode support with persistent storage.
 
-   ```bash
-   npm install
-   ```
+---
 
-2. Start the app
+## 🛠️ Technology Stack
 
-   ```bash
-   npx expo start
-   ```
+- **Frontend Core**: React Native (0.81), Expo SDK 54, TypeScript
+- **Routing**: Expo Router (file-based routing)
+- **Backend Services**: Supabase (Database, Auth, Storage)
+- **Database Engine**: PostgreSQL with PostGIS, Row Level Security (RLS) policies, and spatial indices.
+- **Styling & Assets**: Premium HSL-based palettes, responsive grid layouts, and custom animations.
 
-In the output, you'll find options to open the app in a
+---
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+## 💻 Getting Started
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+### Prerequisites
 
-## Get a fresh project
+Ensure you have [Node.js](https://nodejs.org) and [npm](https://www.npmjs.com) installed.
 
-When you're ready, run:
+### 1. Install Dependencies
+
+Clone the repository and run:
 
 ```bash
-npm run reset-project
+npm install
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+### 2. Configure Environment Variables
 
-### Other setup steps
+Create a `.env` file in the root directory and add your Supabase credentials:
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+```env
+EXPO_PUBLIC_SUPABASE_URL=YOUR_SUPABASE_URL
+EXPO_PUBLIC_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
+```
 
-## Learn more
+### 3. Run the Development Server
 
-To learn more about developing your project with Expo, look at the following resources:
+Start the application using Metro bundler:
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+```bash
+npx expo start
+```
 
-## Join the community
+Press:
+- `w` to open in the Web browser
+- `a` to run on an Android emulator/device
+- `i` to run on an iOS simulator/device
 
-Join our community of developers creating universal apps.
+---
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+## 📂 Project Structure
+
+```
+├── assets/                  # App icon and splash screen assets
+├── scripts/                 # Helper scripts (boilerplate resets)
+└── src/
+    ├── app/                 # Expo Router file-based screens
+    │   ├── (tabs)/          # Main Tab Navigator (Home, Trades, Profile, Publish)
+    │   ├── ad/              # Ad Detail screens (Dynamic route [id].tsx)
+    │   └── _layout.tsx      # Root application layout
+    ├── components/          # Reusable UI and Map components
+    ├── constants/           # Styling design system and themes
+    ├── context/             # Store Context managing state and Supabase queries
+    ├── hooks/               # Custom hooks (themes, color schemes)
+    └── lib/                 # Core libraries (Supabase client init)
+```
